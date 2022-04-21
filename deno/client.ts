@@ -1,160 +1,239 @@
-// const dat = new TextEncoder().encode("abcc");
-// console.log(dat.length);
-
-// const c = await Deno.connect({ port: 6379 });
-
-// const wr = new Uint8Array([
-//   ...new Uint8Array([dat.length + 4, 0, 0, 0]),
-//   ...dat,
-// ]);
-
-// console.log({ wr });
-// await c.write(wr);
-
-// const dat2 = new TextEncoder().encode("d");
-// const sr = new Uint8Array([
-//   ...new Uint8Array([dat2.length + 4, 0, 0, 0]),
-//   ...dat,
-// ]);
-
-// await c.write(wr);
-
-import { Decoder, Encoder } from "https://deno.land/x/cbor@v1.2.1/index.js";
+import { decode, encode } from "./cbor.ts";
+import { createPool, CreatePoolOptions } from "./pool.ts";
 import { Data } from "./types/data.ts";
-const decoder = new Decoder({
-  useRecords: false,
-});
+import { fromUint, MAX_OP_CODE, toUint } from "./utils.ts";
 
-const encoder = new Encoder({
-  useRecords: false,
-});
+export function createCache(
+  options: {
+    conn: Deno.ConnectOptions;
+    pool: Omit<CreatePoolOptions<Deno.Conn>, "create" | "destroy">;
+  },
+) {
+  const pool = createPool({
+    ...options.pool,
+    create: async () => {
+      return await createConnection(options.conn);
+    },
+    destroy: async (conn) => {
+      conn.requests.forEach((req) => {
+        req.reject();
+      });
 
-async function createConnection(options: Deno.ConnectOptions) {
-  const connection = await Deno.connect(options);
-  process(connection);
-  await send(connection, 0, { t: "Identify", d: { user: "y" } });
+      conn.conn.close();
+    },
+  });
+
+  return {
+    send: async function (data: Data): Promise<void> {
+      const conn = await pool.acquire();
+      await send(conn.resource.conn, 0, data);
+      pool.free(conn);
+    },
+    request: async function (data: Data): Promise<Data> {
+      const conn = await pool.acquire();
+
+      conn.resource.seq += 1;
+
+      if (conn.resource.seq > MAX_OP_CODE) {
+        conn.resource.seq = 0;
+      }
+
+      // TODO: timeout
+      return new Promise<Data>(async (resolve, reject) => {
+        conn.resource.requests.set(conn.resource.seq, { resolve, reject });
+        await send(conn.resource.conn, conn.resource.seq, data);
+        pool.free(conn);
+      });
+    },
+  };
 }
 
-createConnection({ port: 6379 });
+type Connection = {
+  conn: Deno.Conn;
+  requests: Map<number, { resolve: (data: Data) => void; reject: () => void }>;
+  seq: number;
+};
 
-async function process(connection: Deno.Conn) {
-  while (true) {
-    let lebu = new Uint8Array(4);
+async function createConnection(
+  options: Deno.ConnectOptions,
+): Promise<Connection> {
+  const conn = await Deno.connect(options);
+  const connection = {
+    conn,
+    requests: new Map(),
+    seq: 0,
+  };
+  process(connection, options);
 
-    {
-      const n = await connection.read(lebu);
+  await send(conn, 0, { t: "Identify", d: { user: "y" } });
 
-      // TODO: confirm that n is 4
+  return connection;
+}
 
-      // 0 or null are both bad
-      if (!n) {
-        connection.close();
+async function process(conn: Connection, options: Deno.ConnectOptions) {
+  try {
+    while (true) {
+      let lebu = new Uint8Array(4);
 
-        break;
-      }
-    }
-
-    {
-      let op: number;
       {
-        let buffer = new Uint8Array(2);
-        const n = await connection.read(buffer);
+        const n = await conn.conn.read(lebu);
 
-        // TODO: confirm n
+        // TODO: confirm that n is 4
 
-        op = fromUint(buffer);
+        // 0 or null are both bad
+        if (!n) {
+          conn.conn.close();
+
+          break;
+        }
       }
 
-      console.log({ op });
+      {
+        let op: number;
+        {
+          let buffer = new Uint8Array(2);
+          const n = await conn.conn.read(buffer);
 
-      const toRead = fromUint(lebu) - 6;
+          // TODO: confirm n
 
-      let buffer = new Uint8Array(toRead);
-      const n = await connection.read(buffer);
+          op = fromUint(buffer);
+        }
 
-      if (!n) {
-        connection.close();
+        const toRead = fromUint(lebu) - 6;
 
-        break;
+        let buffer = new Uint8Array(toRead);
+        const n = await conn.conn.read(buffer);
+
+        if (!n) {
+          conn.conn.close();
+
+          break;
+        }
+
+        // TODO: confirm n is len
+
+        // const parsed = new TextDecoder().decode(buffer);
+        let data = decode<Data>(
+          buffer,
+        );
+
+        const prom = conn.requests.get(op);
+        if (!prom) continue;
+
+        prom.resolve(data);
       }
-
-      // TODO: confirm n is len
-
-      // const parsed = new TextDecoder().decode(buffer);
-      console.log({ buffer });
-      let data = decoder.decode(
-        buffer,
-        // new Uint8Array([222, 0, 1, 164, 107, 105, 110, 100, 0]),
-      );
-      console.log({ data });
     }
+  } catch (e) {
+    console.error(e);
+    const newConn = await createConnection(options);
+    conn.conn = newConn.conn;
   }
 }
 
 async function send(connection: Deno.Conn, op: number, data: Data) {
-  const encoded = encoder.encode(data);
+  const encoded = encode(data);
 
   const len = encoded.length + 2 + 4;
 
   const lenUint = toUint(len, 4);
   const opUint = toUint(op, 2);
 
-  const payload = new Uint8Array([...lenUint, ...opUint, ...encoded]);
+  const payload = new Uint8Array(len);
+  payload.set(lenUint);
+  payload.set(opUint, 4);
+  payload.set(encoded, 6);
 
-  console.log({ payload });
   await connection.write(payload);
 }
 
-// const c=await Deno.connect({port: 10000, transport: "tcp", hostname: "127.0.0.1"});
-// await c.write(new TextEncoder().encode(getRandomMessage()));
-// while(1) {
-//     let buf=new Uint8Array(50);
-//     const n=await c.read(buf) || 0;
-//     buf=buf.slice(0, n);
-//     console.log('B >> ', new TextDecoder().decode(buf));
-//     const msg=getRandomMessage();
-//     console.log('A >> ', msg);
-//     if(msg === 'exit') {
-//         c.close();
-//         break;
-//     }
-//     await c.write(new TextEncoder().encode(msg));
+const cache = createCache({ conn: { port: 6379 }, pool: { max: 1 } });
+
+// const now2 = performance.now();
+// // @ts-ignore
+// const res2 = await cache.send(fakeGuild());
+// console.log(`took: ${performance.now() - now2}`);
+// console.log({ res2 });
+
+// const now3 = performance.now();
+// // @ts-ignore
+// const res3 = await cache.send(fakeGuild());
+// console.log(`took: ${performance.now() - now3}`);
+// console.log({ res3 });
+
+// const d = { hey: true };
+const raw = {
+  "id": 223909216866402304n,
+  "name": "Dligence",
+  "icon": "308a4387b88a5988309c0ff9634e13cd",
+  "description": null,
+  "splash": null,
+  "discovery_splash": null,
+  "features": [
+    "MEMBER_VERIFICATION_GATE_ENABLED",
+    "NEWS",
+    "WELCOME_SCREEN_ENABLED",
+    "NEW_THREAD_PERMISSIONS",
+    "THREADS_ENABLED",
+    "PREVIEW_ENABLED",
+    "COMMUNITY",
+  ],
+  "banner": null,
+  "owner_id": 130136895395987456n,
+  "application_id": null,
+  "region": "us-east",
+  "afk_channel_id": null,
+  "afk_timeout": 300,
+  "system_channel_id": null,
+  "widget_enabled": true,
+  "widget_channel_id": 450041734307512321n,
+  "verification_level": 2,
+  "default_message_notifications": 1,
+  "mfa_level": 1,
+  "explicit_content_filter": 2,
+  "max_presences": null,
+  "max_members": 500000,
+  "max_video_channel_users": 25,
+  "vanity_url_code": null,
+  "premium_tier": 0,
+  "premium_subscription_count": 1,
+  "system_channel_flags": 1,
+  "preferred_locale": "en-US",
+  "rules_channel_id": 273389739091165184n,
+  "public_updates_channel_id": 637995617452425226n,
+  "hub_type": null,
+  "premium_progress_bar_enabled": true,
+  "nsfw": false,
+  "nsfw_level": 0,
+  "large": false,
+};
+async function foo() {
+  // const res = await cache.request({
+  //   // @ts-ignore
+  //   t: "Nani",
+  //   // @ts-ignore
+  //   d: 785384884197392384n,
+  // });
+  // @ts-ignore
+  // const res = await cache.request({ t: "CacheGuild", d: raw });
+  const res = await cache.request({ t: "GetStats" });
+  console.log({ res });
+}
+
+foo();
+
+// for (let i = 0; i < 100; ++i) {
+//   foo();
+//   // await new Promise((res) => setTimeout(res, 2000));
 // }
 
-const MAX_PAYLOAD_SIZE = 4_294_967_295;
-const MAX_OP_CODE = 65_535;
+// const ruf = [...Array(1_000).keys()].map(async (_) => {
+//   // const now = performance.now();
+//   await foo();
+//   // console.log(`took: ${performance.now() - now}`);
+// });
 
-function toUint(x: number, len: number): Uint8Array {
-  if (x > MAX_PAYLOAD_SIZE) {
-    throw new Error(`Payload size too big: ${x} `);
-  }
+// const now = performance.now();
+// await Promise.all(ruf);
+// console.log(`took: ${performance.now() - now}`);
 
-  const bin = [];
-
-  while (x !== 0) {
-    const rem = x % 256;
-    x = Math.floor(x / 256);
-
-    if (x === 0 && rem === 0) {
-      break;
-    }
-
-    bin.push(rem);
-  }
-
-  while (bin.length < len) {
-    bin.push(0);
-  }
-
-  return new Uint8Array(bin);
-}
-
-function fromUint(data: Uint8Array): number {
-  let parsed = 0;
-
-  for (let i = 0, len = data.length; i < len; ++i) {
-    parsed += (data[i]) * (Math.pow(256, i));
-  }
-
-  return parsed;
-}
+// #######################################################################################

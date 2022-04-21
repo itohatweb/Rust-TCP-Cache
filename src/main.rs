@@ -1,16 +1,21 @@
-mod types;
+mod models;
 
-use std::io::Cursor;
+use std::{io::Cursor, sync::Arc};
 
 use bytes::{Buf, BytesMut};
+use models::{Cache, Data};
+use simple_process_stats::ProcessStats;
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
-use types::Data;
+
+use crate::models::Stats;
 
 fn main() {
+    let cache = Arc::new(Cache::new());
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
@@ -24,8 +29,9 @@ fn main() {
 
         loop {
             let (socket, address) = listener.accept().await.unwrap();
+            let cache = Arc::clone(&cache);
             tokio::spawn(async move {
-                if let Err(err) = process(socket, address).await {
+                if let Err(err) = process(socket, address, cache).await {
                     println!("{}", err);
                 }
             });
@@ -33,7 +39,7 @@ fn main() {
     });
 }
 
-async fn process(socket: TcpStream, address: SocketAddr) -> Result<(), Error> {
+async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> Result<(), Error> {
     let mut connection = Connection::new(socket);
 
     let timed = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -50,7 +56,6 @@ async fn process(socket: TcpStream, address: SocketAddr) -> Result<(), Error> {
     match timed {
         Err(_) | Ok(false) => return Err(Error::Unauthorized(address.to_string())),
         Ok(true) => {
-            connection.authenticated = true;
             connection.send_frame(&Frame::new(0, Data::Hello)).await?;
         }
     }
@@ -58,7 +63,32 @@ async fn process(socket: TcpStream, address: SocketAddr) -> Result<(), Error> {
     loop {
         match connection.read_frame().await {
             Ok(Some(frame)) => {
-                dbg!(frame);
+                dbg!(&frame);
+
+                match frame.data {
+                    Data::GetStats => {
+                        let process_stats = ProcessStats::get().await.unwrap();
+
+                        connection
+                            .send_frame(&Frame::new(
+                                frame.seq,
+                                Data::Stats(Stats {
+                                    guilds: cache.guilds.len(),
+                                    used_memory: process_stats.memory_usage_bytes as f64
+                                        / 1_000_000.0,
+                                }),
+                            ))
+                            .await?
+                    }
+                    Data::CacheGuild(guild) => {
+                        cache.guilds.insert(guild.id, guild);
+                        dbg!("INSRTING");
+                        connection
+                            .send_frame(&Frame::new(frame.seq, Data::Hello))
+                            .await?
+                    }
+                    _ => connection.send_frame(&frame).await?,
+                }
             }
             Ok(None) => {
                 println!(
@@ -77,7 +107,6 @@ async fn process(socket: TcpStream, address: SocketAddr) -> Result<(), Error> {
 
 #[derive(Debug)]
 pub struct Connection {
-    authenticated: bool,
     buffer: BytesMut,
     stream: TcpStream,
 }
@@ -85,7 +114,6 @@ pub struct Connection {
 impl Connection {
     pub fn new(stream: TcpStream) -> Connection {
         Connection {
-            authenticated: false,
             buffer: BytesMut::with_capacity(4096),
             stream,
         }
@@ -129,18 +157,18 @@ impl Connection {
         let mut buff = Vec::new();
         ciborium::ser::into_writer(&frame.data, &mut buff)?;
 
-        let len = buff.len() + uarum::OP_CODE_LEN + uarum::PAYLOAD_SIZE_LEN;
+        let len = buff.len() + uarum::SEQ_LEN + uarum::PAYLOAD_SIZE_LEN;
 
         let mut len_vec = uarum::to_vec(len as u32);
         len_vec.resize(uarum::PAYLOAD_SIZE_LEN, 0);
 
-        let mut op = uarum::to_vec(frame.op as u32);
-        op.resize(uarum::OP_CODE_LEN, 0);
+        let mut seq = uarum::to_vec(frame.seq as u32);
+        seq.resize(uarum::SEQ_LEN, 0);
 
         let mut payload = Vec::with_capacity(len);
 
         payload.extend_from_slice(&len_vec);
-        payload.extend_from_slice(&op);
+        payload.extend_from_slice(&seq);
         payload.extend_from_slice(&buff);
 
         self.stream.write(&payload).await?;
@@ -152,12 +180,12 @@ impl Connection {
 #[derive(Debug)]
 pub struct Frame {
     data: Data,
-    op: u16,
+    seq: u16,
 }
 
 impl Frame {
-    pub fn new(op: u16, data: Data) -> Self {
-        Self { data, op }
+    pub fn new(seq: u16, data: Data) -> Self {
+        Self { data, seq }
     }
 
     fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, Error> {
@@ -165,11 +193,11 @@ impl Frame {
         src.copy_to_slice(&mut len_buffer);
         let len = uarum::from_vec(&len_buffer);
 
-        let data: Data = ciborium::de::from_reader(&src.get_ref()[6..len]).unwrap();
+        let data: Data = ciborium::de::from_reader(&src.get_ref()[6..len])?;
 
         Ok(Frame {
             data,
-            op: uarum::from_vec(&src.get_ref()[4..6]) as u16,
+            seq: uarum::from_vec(&src.get_ref()[4..6]) as u16,
         })
     }
 
@@ -194,7 +222,7 @@ impl Frame {
 
 mod uarum {
     pub const PAYLOAD_SIZE_LEN: usize = 4;
-    pub const OP_CODE_LEN: usize = 2;
+    pub const SEQ_LEN: usize = 2;
 
     pub const MAX_PAYLOAD_SIZE: u32 = u32::MAX;
     pub const MAX_OP_CODE: u16 = u16::MAX;
