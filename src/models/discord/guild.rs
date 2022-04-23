@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Guild {
     pub afk_channel_id: Option<u64>,
     pub afk_timeout: u64,
@@ -9,16 +10,16 @@ pub struct Guild {
     pub approximate_member_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approximate_presence_count: Option<u64>,
-    pub banner: Option<String>,
+    pub banner: Option<Box<String>>,
     pub default_message_notifications: u8,
-    pub description: Option<String>,
-    pub discovery_splash: Option<String>,
+    pub description: Option<Box<String>>,
+    pub discovery_splash: Option<Box<String>>,
     pub explicit_content_filter: u8,
     pub features: Vec<String>,
-    pub icon: Option<String>,
+    pub icon: Option<Box<String>>,
     pub id: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub joined_at: Option<String>,
+    pub joined_at: Option<Box<String>>,
     pub large: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_members: Option<u64>,
@@ -43,13 +44,15 @@ pub struct Guild {
     pub premium_subscription_count: Option<u64>,
     #[serde(default)]
     pub premium_tier: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_updates_channel_id: Option<u64>,
     pub rules_channel_id: Option<u64>,
-    pub splash: Option<String>,
+    pub splash: Option<Box<String>>,
     pub system_channel_flags: u64,
     pub system_channel_id: Option<u64>,
     #[serde(default)]
     pub unavailable: bool,
-    pub vanity_url_code: Option<String>,
+    pub vanity_url_code: Option<Box<String>>,
     pub verification_level: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub widget_channel_id: Option<u64>,

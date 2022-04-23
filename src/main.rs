@@ -17,7 +17,7 @@ fn main() {
     let cache = Arc::new(Cache::new());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
+        .worker_threads(8)
         .enable_all()
         .build()
         .expect("Failed to build Tokio Runtime");
@@ -43,7 +43,9 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
     let mut connection = Connection::new(socket);
 
     let timed = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        if let Ok(Some(frame)) = connection.read_frame().await {
+        let frame = connection.read_frame().await;
+        dbg!(&frame);
+        if let Ok(Some(frame)) = frame {
             if let Data::Identify(identify) = frame.data {
                 return !identify.user.is_empty();
             }
@@ -63,17 +65,26 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
     loop {
         match connection.read_frame().await {
             Ok(Some(frame)) => {
-                dbg!(&frame);
+                // dbg!(&frame);
 
                 match frame.data {
                     Data::GetStats => {
                         let process_stats = ProcessStats::get().await.unwrap();
 
+                        dbg!(Stats {
+                            channels: cache.channels.len(),
+                            guilds: cache.guilds.len(),
+                            roles: cache.roles.len(),
+                            used_memory: process_stats.memory_usage_bytes as f64 / 1_000_000.0,
+                        });
+
                         connection
                             .send_frame(&Frame::new(
                                 frame.seq,
                                 Data::Stats(Stats {
+                                    channels: cache.channels.len(),
                                     guilds: cache.guilds.len(),
+                                    roles: cache.roles.len(),
                                     used_memory: process_stats.memory_usage_bytes as f64
                                         / 1_000_000.0,
                                 }),
@@ -82,10 +93,26 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
                     }
                     Data::CacheGuild(guild) => {
                         cache.guilds.insert(guild.id, guild);
-                        dbg!("INSRTING");
-                        connection
-                            .send_frame(&Frame::new(frame.seq, Data::Hello))
-                            .await?
+                    }
+                    Data::CacheChannel(channel) => {
+                        if let Some(guild_id) = channel.guild_id {
+                            cache
+                                .guild_channels
+                                .entry(guild_id)
+                                .or_default()
+                                .insert(channel.id);
+                        }
+
+                        cache.channels.insert(channel.id, channel);
+                    }
+                    Data::CacheRole(data) => {
+                        cache
+                            .guild_roles
+                            .entry(data.guild_id)
+                            .or_default()
+                            .insert(data.role.id);
+
+                        cache.roles.insert(data.role.id, data.role);
                     }
                     _ => connection.send_frame(&frame).await?,
                 }
@@ -260,13 +287,15 @@ mod uarum {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Cbor deserialize Error: {0}")]
-    CborDe(#[from] ciborium::ser::Error<std::io::Error>),
+    CborDe(#[from] ciborium::de::Error<std::io::Error>),
     #[error("Cbor serialize Error: {0}")]
-    CborSer(#[from] ciborium::de::Error<std::io::Error>),
+    CborSer(#[from] ciborium::ser::Error<std::io::Error>),
     #[error("connection reset by peer.")]
     ConnectionReset,
     #[error("Tokio io Error: {0}")]
     Io(#[from] tokio::io::Error),
+    #[error("Payload too big")]
+    PayloadTooBig,
     #[error("Was not able to authorize an incoming connection from: {0}")]
     Unauthorized(String),
     #[error("The connection from {0} was closed unexpectedly.")]

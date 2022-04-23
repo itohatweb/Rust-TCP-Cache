@@ -1,4 +1,3 @@
-/** A lazy pool. idk very lazy code. */
 export function createPool<T>(options: CreatePoolOptions<T>) {
   const inner = {
     available: [] as PoolResource<T>[],

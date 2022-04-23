@@ -1,15 +1,105 @@
 import { decode, encode } from "./cbor.ts";
+import nanoid from "./nanoid.ts";
 import { createPool, CreatePoolOptions } from "./pool.ts";
-import { Data } from "./types/data.ts";
+import { Channel, Data, OpCode, Role } from "./types/data.ts";
 import { fromUint, MAX_OP_CODE, toUint } from "./utils.ts";
 
-export function createCache(
+const now = performance.now();
+let c = 0;
+
+export async function createWorkerCache(
   options: {
     conn: Deno.ConnectOptions;
     pool: Omit<CreatePoolOptions<Deno.Conn>, "create" | "destroy">;
   },
 ) {
-  const pool = createPool({
+  const promises = new Map<string, { resolve: (data: Data) => void }>();
+
+  const pool = await createPool({
+    ...options.pool,
+    create: async () => {
+      const worker = new Worker(new URL("./worker.ts", import.meta.url).href, {
+        type: "module",
+        deno: {
+          namespace: true,
+          permissions: "inherit",
+        },
+      });
+
+      await new Promise<void>((resolve) => {
+        worker.onmessage = (event) => {
+          if (event.data.t !== "Ready") {
+            return;
+          }
+
+          worker.onmessage = (event) => {
+            if (event.data.id) {
+              promises.get(event.data.id)?.resolve(event.data);
+              promises.delete(event.data.id);
+            }
+          };
+
+          resolve();
+        };
+      });
+
+      return worker;
+    },
+    destroy: async (conn) => {
+      // conn.requests.forEach((req) => {
+      //   req.reject();
+      // });
+
+      // conn.conn.close();
+    },
+  });
+
+  const cache = {
+    send: async function (data: Data): Promise<void> {
+      const worker = await pool.acquire();
+      worker.resource.postMessage({ t: "Send", d: data });
+
+      pool.free(worker);
+
+      c++;
+
+      if (c % 1000 === 0) {
+        console.log(c, "took", performance.now() - now);
+      }
+    },
+    request: async function (data: Data): Promise<Data> {
+      const id = nanoid();
+
+      const worker = await pool.acquire();
+      worker.resource.postMessage({ t: "Request", d: data, id });
+
+      pool.free(worker);
+
+      return new Promise<Data>((resolve, reject) => {
+        promises.set(id, { resolve });
+      });
+    },
+  };
+
+  // This strange thing massively improve the performance of the worker based cache pool.
+  await Promise.all(
+    [new Array(options.pool.max - 1).keys()].map((_) =>
+      cache.send({ op: OpCode.Hello, d: undefined })
+    ),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  return cache;
+}
+
+export async function createCache(
+  options: {
+    conn: Deno.ConnectOptions;
+    pool: Omit<CreatePoolOptions<Deno.Conn>, "create" | "destroy">;
+  },
+) {
+  const pool = await createPool({
     ...options.pool,
     create: async () => {
       return await createConnection(options.conn);
@@ -23,11 +113,17 @@ export function createCache(
     },
   });
 
-  return {
+  const cache = {
     send: async function (data: Data): Promise<void> {
       const conn = await pool.acquire();
       await send(conn.resource.conn, 0, data);
       pool.free(conn);
+
+      c++;
+
+      if (c % 1000 === 0) {
+        console.log(c, "took", performance.now() - now);
+      }
     },
     request: async function (data: Data): Promise<Data> {
       const conn = await pool.acquire();
@@ -46,6 +142,14 @@ export function createCache(
       });
     },
   };
+
+  for (let i = 0; i <= 10; ++i) {
+    await cache.send({ op: OpCode.Hello, d: undefined });
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  return cache;
 }
 
 type Connection = {
@@ -54,7 +158,7 @@ type Connection = {
   seq: number;
 };
 
-async function createConnection(
+export async function createConnection(
   options: Deno.ConnectOptions,
 ): Promise<Connection> {
   const conn = await Deno.connect(options);
@@ -65,7 +169,7 @@ async function createConnection(
   };
   process(connection, options);
 
-  await send(conn, 0, { t: "Identify", d: { user: "y" } });
+  await send(conn, 0, { op: OpCode.Identify, d: { user: "y" } });
 
   return connection;
 }
@@ -127,11 +231,12 @@ async function process(conn: Connection, options: Deno.ConnectOptions) {
     console.error(e);
     const newConn = await createConnection(options);
     conn.conn = newConn.conn;
+    throw "f";
   }
 }
 
-async function send(connection: Deno.Conn, op: number, data: Data) {
-  const encoded = encode(data);
+export async function send(connection: Deno.Conn, op: number, data: Data) {
+  const encoded = encode({ op: data.op, d: data.d });
 
   const len = encoded.length + 2 + 4;
 
@@ -145,95 +250,3 @@ async function send(connection: Deno.Conn, op: number, data: Data) {
 
   await connection.write(payload);
 }
-
-const cache = createCache({ conn: { port: 6379 }, pool: { max: 1 } });
-
-// const now2 = performance.now();
-// // @ts-ignore
-// const res2 = await cache.send(fakeGuild());
-// console.log(`took: ${performance.now() - now2}`);
-// console.log({ res2 });
-
-// const now3 = performance.now();
-// // @ts-ignore
-// const res3 = await cache.send(fakeGuild());
-// console.log(`took: ${performance.now() - now3}`);
-// console.log({ res3 });
-
-// const d = { hey: true };
-const raw = {
-  "id": 223909216866402304n,
-  "name": "Dligence",
-  "icon": "308a4387b88a5988309c0ff9634e13cd",
-  "description": null,
-  "splash": null,
-  "discovery_splash": null,
-  "features": [
-    "MEMBER_VERIFICATION_GATE_ENABLED",
-    "NEWS",
-    "WELCOME_SCREEN_ENABLED",
-    "NEW_THREAD_PERMISSIONS",
-    "THREADS_ENABLED",
-    "PREVIEW_ENABLED",
-    "COMMUNITY",
-  ],
-  "banner": null,
-  "owner_id": 130136895395987456n,
-  "application_id": null,
-  "region": "us-east",
-  "afk_channel_id": null,
-  "afk_timeout": 300,
-  "system_channel_id": null,
-  "widget_enabled": true,
-  "widget_channel_id": 450041734307512321n,
-  "verification_level": 2,
-  "default_message_notifications": 1,
-  "mfa_level": 1,
-  "explicit_content_filter": 2,
-  "max_presences": null,
-  "max_members": 500000,
-  "max_video_channel_users": 25,
-  "vanity_url_code": null,
-  "premium_tier": 0,
-  "premium_subscription_count": 1,
-  "system_channel_flags": 1,
-  "preferred_locale": "en-US",
-  "rules_channel_id": 273389739091165184n,
-  "public_updates_channel_id": 637995617452425226n,
-  "hub_type": null,
-  "premium_progress_bar_enabled": true,
-  "nsfw": false,
-  "nsfw_level": 0,
-  "large": false,
-};
-async function foo() {
-  // const res = await cache.request({
-  //   // @ts-ignore
-  //   t: "Nani",
-  //   // @ts-ignore
-  //   d: 785384884197392384n,
-  // });
-  // @ts-ignore
-  // const res = await cache.request({ t: "CacheGuild", d: raw });
-  const res = await cache.request({ t: "GetStats" });
-  console.log({ res });
-}
-
-foo();
-
-// for (let i = 0; i < 100; ++i) {
-//   foo();
-//   // await new Promise((res) => setTimeout(res, 2000));
-// }
-
-// const ruf = [...Array(1_000).keys()].map(async (_) => {
-//   // const now = performance.now();
-//   await foo();
-//   // console.log(`took: ${performance.now() - now}`);
-// });
-
-// const now = performance.now();
-// await Promise.all(ruf);
-// console.log(`took: ${performance.now() - now}`);
-
-// #######################################################################################
