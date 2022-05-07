@@ -217,7 +217,7 @@ async function process(conn: Connection, options: Deno.ConnectOptions) {
         // TODO: confirm n is len
 
         // const parsed = new TextDecoder().decode(buffer);
-        let data = decode<Data>(
+        let data = await decode<Data>(
           buffer,
         );
 
@@ -236,7 +236,7 @@ async function process(conn: Connection, options: Deno.ConnectOptions) {
 }
 
 export async function send(connection: Deno.Conn, op: number, data: Data) {
-  const encoded = encode({ op: data.op, d: data.d });
+  const encoded = await encode({ op: data.op, d: data.d });
 
   const len = encoded.length + 2 + 4;
 
@@ -248,5 +248,13 @@ export async function send(connection: Deno.Conn, op: number, data: Data) {
   payload.set(opUint, 4);
   payload.set(encoded, 6);
 
-  await connection.write(payload);
+  if (fromUint(lenUint) !== payload.length) {
+    throw new Error("LEN IS NOT THE SAME");
+  }
+
+  try {
+    await connection.write(payload);
+  } catch {
+    Deno.exit(1);
+  }
 }

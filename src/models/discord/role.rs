@@ -32,13 +32,6 @@ pub struct RoleTags {
     pub premium_subscriber: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CacheRole {
-    pub guild_id: u64,
-    pub role: Role,
-}
-
 fn is_false(value: &bool) -> bool {
     value == &false
 }

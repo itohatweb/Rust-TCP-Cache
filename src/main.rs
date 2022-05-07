@@ -1,3 +1,5 @@
+#![allow(clippy::box_collection)]
+
 mod models;
 
 use std::{io::Cursor, sync::Arc};
@@ -17,7 +19,7 @@ fn main() {
     let cache = Arc::new(Cache::new());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(8)
+        .worker_threads(4)
         .enable_all()
         .build()
         .expect("Failed to build Tokio Runtime");
@@ -74,8 +76,10 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
                         dbg!(Stats {
                             channels: cache.channels.len(),
                             guilds: cache.guilds.len(),
+                            members: cache.members.len(),
                             roles: cache.roles.len(),
                             used_memory: process_stats.memory_usage_bytes as f64 / 1_000_000.0,
+                            users: cache.users.len(),
                         });
 
                         connection
@@ -84,9 +88,11 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
                                 Data::Stats(Stats {
                                     channels: cache.channels.len(),
                                     guilds: cache.guilds.len(),
+                                    members: cache.members.len(),
                                     roles: cache.roles.len(),
                                     used_memory: process_stats.memory_usage_bytes as f64
                                         / 1_000_000.0,
+                                    users: cache.users.len(),
                                 }),
                             ))
                             .await?
@@ -110,18 +116,29 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
                             .guild_roles
                             .entry(data.guild_id)
                             .or_default()
-                            .insert(data.role.id);
+                            .insert(data.value.id);
 
-                        cache.roles.insert(data.role.id, data.role);
+                        cache.roles.insert(data.value.id, data.value);
+                    }
+                    Data::CacheMember(data) => {
+                        cache
+                            .guild_members
+                            .entry(data.guild_id)
+                            .or_default()
+                            .insert(data.value.user_id);
+
+                        cache
+                            .members
+                            .insert((data.guild_id, data.value.user_id), data.value);
+                    }
+                    Data::CacheUser(user) => {
+                        cache.users.insert(user.id, user);
                     }
                     _ => connection.send_frame(&frame).await?,
                 }
             }
             Ok(None) => {
-                println!(
-                    "The connection from {} has been closed",
-                    address.to_string()
-                );
+                println!("The connection from {} has been closed", address);
 
                 return Ok(());
             }
@@ -220,6 +237,17 @@ impl Frame {
         src.copy_to_slice(&mut len_buffer);
         let len = uarum::from_vec(&len_buffer);
 
+        {
+            let data: Result<Data, _> = ciborium::de::from_reader(&src.get_ref()[6..len]);
+
+            if let Err(_) = data {
+                let data: Result<ciborium::value::Value, _> =
+                    ciborium::de::from_reader(&src.get_ref()[6..len]);
+                dbg!(data);
+                println!("{:?}", &src.get_ref()[0..len]);
+            }
+        }
+
         let data: Data = ciborium::de::from_reader(&src.get_ref()[6..len])?;
 
         Ok(Frame {
@@ -259,7 +287,7 @@ mod uarum {
 
         while x != 0 {
             let rem = x % 256;
-            x = x / 256;
+            x /= 256;
 
             if x == 0 && rem == 0 {
                 break;
@@ -268,7 +296,7 @@ mod uarum {
             bin.push(rem as u8);
         }
 
-        return bin;
+        bin
     }
 
     pub fn from_vec(data: &[u8]) -> usize {
@@ -276,11 +304,11 @@ mod uarum {
 
         let len = data.len();
 
-        for i in 0..len {
-            parsed += (data[i] as usize) * 256_usize.pow(i as u32);
+        for (i, data) in data.iter().enumerate().take(len) {
+            parsed += (*data as usize) * 256_usize.pow(i as u32);
         }
 
-        return parsed;
+        parsed
     }
 }
 

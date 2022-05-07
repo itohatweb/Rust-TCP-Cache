@@ -9,6 +9,8 @@ export enum OpCode {
   CacheGuild = 5,
   CacheChannel = 6,
   CacheRole = 7,
+  CacheMember = 8,
+  CacheUser = 9,
 }
 
 export type Data =
@@ -20,8 +22,14 @@ export type Data =
   | DataBase<OpCode.Stats, Stats>
   | DataBase<OpCode.CacheGuild, Guild>
   | DataBase<OpCode.CacheChannel, Channel>
-  | DataBase<OpCode.CacheRole, CacheRole>;
+  | DataBase<OpCode.CacheRole, GuildResource<Role>>
+  | DataBase<OpCode.CacheMember, GuildResource<Member>>
+  | DataBase<OpCode.CacheUser, User>;
 
+export type GuildResource<T> = {
+  guildId: bigint;
+  value: T;
+};
 export type Identify = {
   user: string;
 };
@@ -150,7 +158,33 @@ export type RoleTags = {
   premiumSubscriber?: null;
 };
 
-export type CacheRole = {
-  guildId: bigint;
-  role: Role;
+export type Member = {
+  avatar?: string;
+  communicationDisabledUntil?: string;
+  deaf?: boolean;
+  joinedAt: string;
+  mute?: boolean;
+  nick?: string;
+  pending?: boolean;
+  premiumSince?: string;
+  roles: bigint[];
+  userId: bigint;
+};
+
+export type User = {
+  accentColor?: number;
+  avatar?: string;
+  banner?: string;
+  bot?: boolean;
+  discriminator: string;
+  email?: string;
+  flags?: number;
+  id: bigint;
+  locale?: string;
+  mfaEnabled?: boolean;
+  username: string;
+  premiumType?: number;
+  publicFlags?: number;
+  system?: boolean;
+  verified?: boolean;
 };

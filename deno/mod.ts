@@ -3,68 +3,12 @@ const cache = await createWorkerCache({
   pool: { max: 1 },
 });
 
-// const now2 = performance.now();
-//
-// const res2 = await cache.send(fakeGuild());
-// console.log(`took: ${performance.now() - now2}`);
-// console.log({ res2 });
-
-// const now3 = performance.now();
-//
-// const res3 = await cache.send(fakeGuild());
-// console.log(`took: ${performance.now() - now3}`);
-// console.log({ res3 });
-
-// const d = { hey: true };
-const raw = {
-  "id": 223909216866402304n,
-  "name": "Dligence",
-  "icon": "308a4387b88a5988309c0ff9634e13cd",
-  "description": null,
-  "splash": null,
-  "discovery_splash": null,
-  "features": [
-    "MEMBER_VERIFICATION_GATE_ENABLED",
-    "NEWS",
-    "WELCOME_SCREEN_ENABLED",
-    "NEW_THREAD_PERMISSIONS",
-    "THREADS_ENABLED",
-    "PREVIEW_ENABLED",
-    "COMMUNITY",
-  ],
-  "banner": null,
-  "owner_id": 130136895395987456n,
-  "application_id": null,
-  "region": "us-east",
-  "afk_channel_id": null,
-  "afk_timeout": 300,
-  "system_channel_id": null,
-  "widget_enabled": true,
-  "widget_channel_id": 450041734307512321n,
-  "verification_level": 2,
-  "default_message_notifications": 1,
-  "mfa_level": 1,
-  "explicit_content_filter": 2,
-  "max_presences": null,
-  "max_members": 500000,
-  "max_video_channel_users": 25,
-  "vanity_url_code": null,
-  "premium_tier": 0,
-  "premium_subscription_count": 1,
-  "system_channel_flags": 1,
-  "preferred_locale": "en-US",
-  "rules_channel_id": 273389739091165184n,
-  "public_updates_channel_id": 637995617452425226n,
-  "hub_type": null,
-  "premium_progress_bar_enabled": true,
-  "nsfw": false,
-  "nsfw_level": 0,
-  "large": false,
-};
 let shouldStats = {
-  guilds: 0,
   channels: 0,
+  guilds: 0,
+  members: 0,
   roles: 0,
+  users: 0,
 };
 
 async function foo() {
@@ -74,6 +18,9 @@ async function foo() {
   //
   //   d: 785384884197392384n,
   // });
+  console.log(
+    "REQUESTING --------------------------------------------------------------------------------------",
+  );
   const now = performance.now();
   const actual = await cache.request({ op: OpCode.GetStats, d: undefined });
   // const actual = await cache.request({ t: "GetStats" });
@@ -189,6 +136,41 @@ function transformRole(payload: any): Role {
   };
 }
 
+function transformMember(payload: any): Member {
+  return {
+    avatar: payload.avatar,
+    communicationDisabledUntil: payload.communication_disabled_until,
+    deaf: payload.deaf,
+    joinedAt: payload.joined_at,
+    mute: payload.mute,
+    nick: payload.nick,
+    pending: payload.pending,
+    premiumSince: payload.premium_since,
+    roles: payload.roles.map((r: string) => BigInt(r)),
+    userId: BigInt(payload.user.id),
+  };
+}
+
+function transformUser(payload: any): User {
+  return {
+    accentColor: payload.accent_color,
+    avatar: payload.avatar,
+    banner: payload.banner,
+    bot: payload.bot,
+    discriminator: payload.discriminator,
+    email: payload.email,
+    flags: payload.flags,
+    id: BigInt(payload.id),
+    locale: payload.locale,
+    mfaEnabled: payload.mfa_enabled,
+    username: payload.username,
+    premiumType: payload.premium_type,
+    publicFlags: payload.public_flags,
+    system: payload.system,
+    verified: payload.verified,
+  };
+}
+
 import {
   createBot,
   GatewayDispatchEventNames,
@@ -199,6 +181,8 @@ import {
 
 // let id = 0;
 
+let users = new Set();
+
 const bot = createBot({
   token: "",
   botId: 0n,
@@ -208,6 +192,8 @@ const bot = createBot({
         let payload: any = data.d;
 
         shouldStats.guilds++;
+
+        let existingMembers = new Set();
 
         // console.log({ payload: payload.channels });
 
@@ -282,8 +268,34 @@ const bot = createBot({
             const d = transformRole(r);
             await cache.send({
               op: OpCode.CacheRole,
-              d: { role: d, guildId: BigInt(payload.id) },
+              d: { value: d, guildId: BigInt(payload.id) },
             });
+          })),
+          Promise.all(payload.members.map(async (m: any) => {
+            const d = transformMember(m);
+            if (existingMembers.has(d.userId)) {
+              return;
+            }
+
+            existingMembers.add(d.userId);
+
+            shouldStats.members++;
+
+            await cache.send({
+              op: OpCode.CacheMember,
+              d: { value: d, guildId: BigInt(payload.id) },
+            });
+          })),
+          Promise.all(payload.members.map(async (m: any) => {
+            const d = transformUser(m.user);
+            if (users.has(d.id)) {
+              return;
+            }
+
+            users.add(d.id);
+            shouldStats.users++;
+
+            await cache.send({ op: OpCode.CacheUser, d: d });
           })),
         ]);
 
@@ -299,7 +311,9 @@ const bot = createBot({
 
 import { walk, walkSync } from "https://deno.land/std@0.136.0/fs/mod.ts";
 import { createCache, createWorkerCache } from "./client.ts";
-import { Channel, OpCode, Role } from "./types/data.ts";
+import { Channel, Member, OpCode, Role, User } from "./types/data.ts";
+import { decode } from "./cbor.ts";
+import { fromUint } from "./utils.ts";
 
 let paths: string[] = [];
 let payloads: { offset: number; data: Object }[] = [];
@@ -313,17 +327,17 @@ async function run() {
   await Promise.all(paths.map(async (path) => {
     const file = JSON.parse(await Deno.readTextFile(path));
 
-    // setTimeout(() => {
-    bot.events.raw({} as any, file.data, 0);
-    if (file.data.t) {
-      bot.handlers
-        [file.data.t as GatewayDispatchEventNames | "GUILD_LOADED_DD"]?.(
-          bot,
-          file.data,
-          0,
-        );
-    }
-    // }, 10); // file.offset);
+    setTimeout(() => {
+      bot.events.raw({} as any, file.data, 0);
+      if (file.data.t) {
+        bot.handlers
+          [file.data.t as GatewayDispatchEventNames | "GUILD_LOADED_DD"]?.(
+            bot,
+            file.data,
+            0,
+          );
+      }
+    }, file.offset);
   }));
 }
 

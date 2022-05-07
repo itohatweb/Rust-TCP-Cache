@@ -7,7 +7,7 @@ use serde::{
 };
 
 use super::{
-    discord::{CacheRole, Channel, Guild},
+    discord::{Channel, Guild, GuildResource, Member, Role, User},
     Identify, Stats,
 };
 
@@ -20,7 +20,9 @@ pub enum Data {
     Stats(Stats),
     CacheGuild(Guild),
     CacheChannel(Channel),
-    CacheRole(CacheRole),
+    CacheRole(GuildResource<Role>),
+    CacheMember(GuildResource<Member>),
+    CacheUser(User),
 }
 
 impl Data {
@@ -34,6 +36,8 @@ impl Data {
             Self::CacheGuild(_) => OpCode::CacheGuild,
             Self::CacheChannel(_) => OpCode::CacheChannel,
             Self::CacheRole(_) => OpCode::CacheRole,
+            Self::CacheMember(_) => OpCode::CacheMember,
+            Self::CacheUser(_) => OpCode::CacheUser,
         }
     }
 }
@@ -48,6 +52,8 @@ pub enum OpCode {
     CacheGuild,
     CacheChannel,
     CacheRole,
+    CacheMember,
+    CacheUser,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -63,6 +69,8 @@ impl TryFrom<u8> for OpCode {
             5 => Ok(OpCode::CacheGuild),
             6 => Ok(OpCode::CacheChannel),
             7 => Ok(OpCode::CacheRole),
+            8 => Ok(OpCode::CacheMember),
+            9 => Ok(OpCode::CacheUser),
             _ => Err(format!("u8 {} cannot converted to an OpCode", op)),
         }
     }
@@ -79,6 +87,8 @@ impl From<OpCode> for u8 {
             OpCode::CacheGuild => 5,
             OpCode::CacheChannel => 6,
             OpCode::CacheRole => 7,
+            OpCode::CacheMember => 8,
+            OpCode::CacheUser => 9,
         }
     }
 }
@@ -122,6 +132,10 @@ impl<'de> Visitor<'de> for DataVisitor {
 
             match key {
                 Field::Op => {
+                    if op.is_some() {
+                        return Err(DeError::duplicate_field("op"));
+                    }
+
                     let raw: u8 = map.next_value()?;
                     op = Some(OpCode::try_from(raw).map_err(|_| {
                         DeError::invalid_value(
@@ -175,36 +189,37 @@ impl<'de> Visitor<'de> for DataVisitor {
 
                 Data::CacheRole(role)
             }
+            OpCode::CacheMember => {
+                let member = map.next_value()?;
+
+                Data::CacheMember(member)
+            }
+            OpCode::CacheUser => {
+                let user = map.next_value()?;
+
+                Data::CacheUser(user)
+            }
         })
     }
 }
 
 impl Serialize for Data {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let len = 1 + match &self {
-            Data::Identify(_) => 1,
-            Data::Hello => 0,
-            Data::Nani(_) => 1,
-            Data::GetStats => 0,
-            Data::Stats(_) => 1,
-            Data::CacheGuild(_) => 1,
-            Data::CacheChannel(_) => 1,
-            Data::CacheRole(_) => 1,
-        };
-
-        let mut state = serializer.serialize_struct("Data", len)?;
+        let mut state = serializer.serialize_struct("Data", 2)?;
 
         state.serialize_field("op", &u8::from(self.get_op()))?;
 
         match &self {
             Data::Identify(i) => state.serialize_field("d", i)?,
-            Data::Hello => {}
+            Data::Hello => state.serialize_field("d", &())?,
             Data::Nani(n) => state.serialize_field("d", n)?,
-            Data::GetStats => {}
+            Data::GetStats => state.serialize_field("d", &())?,
             Data::Stats(s) => state.serialize_field("d", s)?,
             Data::CacheGuild(g) => state.serialize_field("d", g)?,
             Data::CacheChannel(c) => state.serialize_field("d", c)?,
             Data::CacheRole(r) => state.serialize_field("d", r)?,
+            Data::CacheMember(m) => state.serialize_field("d", m)?,
+            Data::CacheUser(u) => state.serialize_field("d", u)?,
         }
 
         state.end()

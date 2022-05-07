@@ -29,7 +29,7 @@ pub struct Channel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_count: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub name: Option<Box<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub newly_created: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,7 +82,7 @@ pub struct ThreadMetadata {
     pub auto_archive_duration: u16,
     pub archive_timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create_timestamp: Option<String>,
+    pub create_timestamp: Option<Box<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invitable: Option<bool>,
     #[serde(default)]

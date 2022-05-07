@@ -4,14 +4,19 @@ import { MAX_OP_CODE } from "./utils.ts";
 
 const context: Worker = self as any;
 
-const connection = await createConnection({
+let connection = await createConnection({
   port: 6379,
 });
 
 context.onmessage = async (e: MessageEvent<WorkerMessage>) => {
   switch (e.data.t) {
     case "Send": {
-      await send(connection.conn, 0, e.data.d);
+      try {
+        await send(connection.conn, 65_535, e.data.d);
+        // sendQueue(65_535, e.data.d);
+      } catch (e) {
+        console.error(e);
+      }
 
       break;
     }
@@ -30,7 +35,12 @@ context.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         reject: () => {},
       });
 
-      await send(connection.conn, connection.seq, e.data.d);
+      try {
+        await send(connection.conn, connection.seq, e.data.d);
+        // sendQueue(connection.seq, e.data.d);
+      } catch (e) {
+        console.error(e);
+      }
 
       break;
     }

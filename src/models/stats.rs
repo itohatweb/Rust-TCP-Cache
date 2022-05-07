@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct Stats {
     pub channels: usize,
     pub guilds: usize,
-    pub used_memory: f64,
+    pub members: usize,
     pub roles: usize,
+    pub used_memory: f64,
+    pub users: usize,
 }
