@@ -7,7 +7,7 @@ use serde::{
 };
 
 use super::{
-    discord::{Channel, Guild, GuildResource, Member, Role, User},
+    discord::{Channel, Guild, GuildResource, Member, Message, Role, User},
     Identify, Stats,
 };
 
@@ -23,6 +23,7 @@ pub enum Data {
     CacheRole(GuildResource<Role>),
     CacheMember(GuildResource<Member>),
     CacheUser(User),
+    CacheMessage(Message),
 }
 
 impl Data {
@@ -38,6 +39,7 @@ impl Data {
             Self::CacheRole(_) => OpCode::CacheRole,
             Self::CacheMember(_) => OpCode::CacheMember,
             Self::CacheUser(_) => OpCode::CacheUser,
+            Self::CacheMessage(_) => OpCode::CacheMessage,
         }
     }
 }
@@ -54,6 +56,7 @@ pub enum OpCode {
     CacheRole,
     CacheMember,
     CacheUser,
+    CacheMessage,
 }
 
 impl TryFrom<u8> for OpCode {
@@ -71,6 +74,7 @@ impl TryFrom<u8> for OpCode {
             7 => Ok(OpCode::CacheRole),
             8 => Ok(OpCode::CacheMember),
             9 => Ok(OpCode::CacheUser),
+            10 => Ok(OpCode::CacheMessage),
             _ => Err(format!("u8 {} cannot converted to an OpCode", op)),
         }
     }
@@ -89,6 +93,7 @@ impl From<OpCode> for u8 {
             OpCode::CacheRole => 7,
             OpCode::CacheMember => 8,
             OpCode::CacheUser => 9,
+            OpCode::CacheMessage => 10,
         }
     }
 }
@@ -199,6 +204,11 @@ impl<'de> Visitor<'de> for DataVisitor {
 
                 Data::CacheUser(user)
             }
+            OpCode::CacheMessage => {
+                let message = map.next_value()?;
+
+                Data::CacheMessage(message)
+            }
         })
     }
 }
@@ -220,6 +230,7 @@ impl Serialize for Data {
             Data::CacheRole(r) => state.serialize_field("d", r)?,
             Data::CacheMember(m) => state.serialize_field("d", m)?,
             Data::CacheUser(u) => state.serialize_field("d", u)?,
+            Data::CacheMessage(m) => state.serialize_field("d", m)?,
         }
 
         state.end()

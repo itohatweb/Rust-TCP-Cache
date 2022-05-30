@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::Permissions;
+use super::{is_false, Permissions};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,10 +30,6 @@ pub struct RoleTags {
     pub integration_id: Option<u64>,
     #[serde(default, skip_serializing_if = "is_false", with = "true_null")]
     pub premium_subscriber: bool,
-}
-
-fn is_false(value: &bool) -> bool {
-    value == &false
 }
 
 // Discord is cursed, `null` means `true` WHHAAAAAT

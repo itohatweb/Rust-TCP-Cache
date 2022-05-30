@@ -1,4 +1,5 @@
 import { decode, encode } from "./cbor.ts";
+import { writeAll } from "./deps.ts";
 import nanoid from "./nanoid.ts";
 import { createPool, CreatePoolOptions } from "./pool.ts";
 import { Channel, Data, OpCode, Role } from "./types/data.ts";
@@ -253,7 +254,9 @@ export async function send(connection: Deno.Conn, op: number, data: Data) {
   }
 
   try {
-    await connection.write(payload);
+    // await connection.write(payload);
+    await writeAll(connection, payload);
+    // Deno.writeAll(connection, payload);
   } catch {
     Deno.exit(1);
   }

@@ -77,6 +77,7 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
                             channels: cache.channels.len(),
                             guilds: cache.guilds.len(),
                             members: cache.members.len(),
+                            messages: cache.messages.len(),
                             roles: cache.roles.len(),
                             used_memory: process_stats.memory_usage_bytes as f64 / 1_000_000.0,
                             users: cache.users.len(),
@@ -89,6 +90,7 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
                                     channels: cache.channels.len(),
                                     guilds: cache.guilds.len(),
                                     members: cache.members.len(),
+                                    messages: cache.messages.len(),
                                     roles: cache.roles.len(),
                                     used_memory: process_stats.memory_usage_bytes as f64
                                         / 1_000_000.0,
@@ -133,6 +135,9 @@ async fn process(socket: TcpStream, address: SocketAddr, cache: Arc<Cache>) -> R
                     }
                     Data::CacheUser(user) => {
                         cache.users.insert(user.id, user);
+                    }
+                    Data::CacheMessage(message) => {
+                        cache.messages.insert(message.id, message);
                     }
                     _ => connection.send_frame(&frame).await?,
                 }
@@ -243,7 +248,7 @@ impl Frame {
             if let Err(_) = data {
                 let data: Result<ciborium::value::Value, _> =
                     ciborium::de::from_reader(&src.get_ref()[6..len]);
-                dbg!(data);
+                println!("{:?}", data);
                 println!("{:?}", &src.get_ref()[0..len]);
             }
         }

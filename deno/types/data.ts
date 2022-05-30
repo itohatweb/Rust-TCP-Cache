@@ -11,6 +11,7 @@ export enum OpCode {
   CacheRole = 7,
   CacheMember = 8,
   CacheUser = 9,
+  CacheMessage = 10,
 }
 
 export type Data =
@@ -24,7 +25,8 @@ export type Data =
   | DataBase<OpCode.CacheChannel, Channel>
   | DataBase<OpCode.CacheRole, GuildResource<Role>>
   | DataBase<OpCode.CacheMember, GuildResource<Member>>
-  | DataBase<OpCode.CacheUser, User>;
+  | DataBase<OpCode.CacheUser, User>
+  | DataBase<OpCode.CacheMessage, Message>;
 
 export type GuildResource<T> = {
   guildId: bigint;
@@ -62,12 +64,12 @@ export type Guild = {
   maxVideoChannelUsers?: number;
   memberCount?: number;
   mfaLevel: number;
-  name: String;
+  name: string;
   nsfwLevel: number;
   ownerId: bigint;
   owner?: boolean;
-  // permissions: Option<Permissions>,
-  preferredLocale: String;
+  // permissions?: Permissions,
+  preferredLocale: string;
   premiumProgressBarEnabled: boolean;
   premiumSubscriptionCount?: number;
   premiumTier: number;
@@ -96,7 +98,7 @@ export type Channel = {
   member?: ThreadMember;
   memberCount?: number;
   messageCount?: number;
-  name?: String;
+  name?: string;
   newlyCreated?: boolean;
   nsfw?: boolean;
   ownerId?: bigint;
@@ -117,8 +119,8 @@ export type ThreadMember = {
   id?: bigint;
   joinTimestamp: string;
   // TODO
-  // member: Option<Member>,
-  // presence: Option<Presence>,
+  // member?: Member,
+  // presence?: Presence,
   userId?: bigint;
 };
 
@@ -135,7 +137,7 @@ export type PermissionOverwrite = {
   allow: bigint;
   deny: bigint;
   id: bigint;
-  kind: number;
+  type: number;
 };
 
 export type Role = {
@@ -187,4 +189,165 @@ export type User = {
   publicFlags?: number;
   system?: boolean;
   verified?: boolean;
+};
+
+export type Message = {
+  // activity?: MessageActivity,
+  // application?: MessageApplication,
+  // applicationId?: u64,
+  attachments: Attachment[];
+  // author: User,
+  author: bigint;
+  channelId: bigint;
+  components: Component[];
+  content: string;
+  editedTimestamp?: string;
+  embeds: Embed;
+  // flags?: u64,
+  guildId?: bigint;
+  id: bigint;
+  interaction?: MessageInteraction;
+  type: number;
+  // member?: Member,
+  // mentionChannels: VecChannelMention,
+  // mentionEveryone: bool,
+  // mentionRoles: Vecu64,
+  // mentions: VecMention,
+  pinned: boolean;
+  // reactions: VecMessageReaction,
+  // reference?: MessageReference,
+  referencedMessage?: Message;
+  // stickerItems: VecMessageSticker,
+  threadId?: bigint;
+  // timestamp: string,
+  // thread?: Channel,
+  // tts: bool,
+  webhookId?: bigint;
+};
+
+export type MessageActivity = {
+  type: number;
+  partyId?: string;
+};
+
+export type MessageApplication = {
+  coverImage?: string;
+  description: string;
+  icon?: string;
+  id: bigint;
+  name: string;
+};
+
+export type Attachment = {
+  contentType?: string;
+  ephemeral: boolean;
+  filename: string;
+  description?: string;
+  height?: number;
+  id: bigint;
+  proxyUrl: string;
+  size: number;
+  url: string;
+  width?: number;
+};
+
+export type Component = {
+  components?: Component[];
+  customId?: string;
+  disabled?: boolean;
+  emoji?: Reaction;
+  type: number;
+  label?: string;
+  maxLength?: number;
+  maxValues?: number;
+  minLength?: number;
+  minValues?: number;
+  options?: SelectMenuOption[];
+  placeholder?: string;
+  required?: boolean;
+  style?: number;
+  url?: string;
+  value?: string;
+};
+
+export type Reaction = {
+  animated?: boolean;
+  id?: bigint;
+  name?: string;
+};
+
+export type SelectMenuOption = {
+  default: boolean;
+  description?: string;
+  emoji?: Reaction;
+  label: string;
+  value: string;
+};
+
+export type Embed = {
+  author?: EmbedAuthor;
+  color?: number;
+  description?: string;
+  fields?: EmbedField[];
+  footer?: EmbedFooter;
+  image?: EmbedImage;
+  type: string;
+  provider?: EmbedProvider;
+  thumbnail?: EmbedThumbnail;
+  timestamp?: string;
+  title?: string;
+  url?: string;
+  video?: EmbedVideo;
+};
+
+export type EmbedAuthor = {
+  iconUrl?: string;
+  name: string;
+  proxyIconUrl?: string;
+  url?: string;
+};
+
+export type EmbedField = {
+  inline: boolean;
+  name: string;
+  value: string;
+};
+
+export type EmbedFooter = {
+  iconUrl?: string;
+  proxyIconUrl?: string;
+  text: string;
+};
+
+export type EmbedImage = {
+  height?: number;
+  proxyUrl?: string;
+  url: string;
+  width?: number;
+};
+
+export type EmbedProvider = {
+  name?: string;
+  url?: string;
+};
+
+export type EmbedThumbnail = {
+  height?: number;
+  proxyUrl?: string;
+  url: string;
+  width?: number;
+};
+
+export type EmbedVideo = {
+  height?: number;
+  proxyUrl?: string;
+  url?: string;
+  width?: number;
+};
+
+export type MessageInteraction = {
+  id: bigint;
+  type: number;
+  name: string;
+  user: bigint;
 };

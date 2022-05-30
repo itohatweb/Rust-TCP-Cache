@@ -1,6 +1,6 @@
 use dashmap::{DashMap, DashSet};
 
-use super::discord::{Channel, Guild, Member, Role, User};
+use super::discord::{Channel, Guild, Member, Message, Role, User};
 
 pub struct Cache {
     pub channels: DashMap<u64, Channel>,
@@ -10,6 +10,7 @@ pub struct Cache {
     pub guild_roles: DashMap<u64, DashSet<u64>>,
     /// Key is: (Guild Id, User Id)
     pub members: DashMap<(u64, u64), Member>,
+    pub messages: DashMap<u64, Message>,
     pub roles: DashMap<u64, Role>,
     pub users: DashMap<u64, User>,
 }
@@ -23,6 +24,7 @@ impl Cache {
             guild_members: DashMap::new(),
             guild_roles: DashMap::new(),
             members: DashMap::new(),
+            messages: DashMap::new(),
             roles: DashMap::new(),
             users: DashMap::new(),
         }

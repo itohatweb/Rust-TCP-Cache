@@ -1,11 +1,12 @@
 const cache = await createWorkerCache({
   conn: { port: 6379 },
-  pool: { max: 1 },
+  pool: { max: 10 },
 });
 
 let shouldStats = {
   channels: 0,
   guilds: 0,
+  messages: 0,
   members: 0,
   roles: 0,
   users: 0,
@@ -23,8 +24,20 @@ async function foo() {
   );
   const now = performance.now();
   const actual = await cache.request({ op: OpCode.GetStats, d: undefined });
+  const used = Deno.memoryUsage();
+  let arr: any = {};
+  for (let key in used) {
+    arr[key] = Math.round(used[key as keyof typeof used] / 1000 / 1000 * 100) /
+      100;
+  }
+
   // const actual = await cache.request({ t: "GetStats" });
-  console.log({ actual, expected: shouldStats, took: performance.now() - now });
+  console.log({
+    actual,
+    expected: shouldStats,
+    took: performance.now() - now,
+    deno: arr,
+  });
 }
 
 setInterval(() => {
@@ -76,7 +89,8 @@ function transformChannel(payload: any): Channel {
           : undefined,
       }
       : undefined,
-    memberCount: payload.member_count ?? undefined,
+    memberCount: (payload.member_count < 0 ? 0 : payload.member_count) ??
+      undefined,
     messageCount: payload.message_count ?? undefined,
     name: payload.name ?? undefined,
     newlyCreated: payload.newly_created ?? undefined,
@@ -171,6 +185,126 @@ function transformUser(payload: any): User {
   };
 }
 
+function transformComponent(component: any): Component {
+  return {
+    components: component.components?.map((c: any) => transformComponent(c)),
+    customId: component.custom_id,
+    disabled: component.disabled,
+    emoji: component.emoji
+      ? {
+        animated: component.emoji.animated,
+        id: component.emoji.id ? BigInt(component.emoji.id) : undefined,
+        name: component.emoji.name,
+      }
+      : undefined,
+    type: component.type,
+    label: component.label,
+    maxLength: component.max_length,
+    maxValues: component.max_values,
+    minLength: component.min_length,
+    minValues: component.min_values,
+    options: component.options?.map((o: any) => ({
+      default: o.default,
+      description: o.description,
+      emoji: o.emoji
+        ? {
+          animated: o.emoji.animated,
+          id: o.emoji.id ? BigInt(o.emoji.id) : undefined,
+          name: o.name,
+        }
+        : undefined,
+      label: o.label,
+      value: o.value,
+    })),
+    placeholder: component.placeholder,
+    required: component.required,
+    style: component.style,
+    url: component.url,
+    value: component.value,
+  };
+}
+
+function transformMessage(payload: any): Message {
+  return {
+    attachments: payload.attachments.map((attachment: any) => ({
+      contentType: attachment.content_type,
+      ephemeral: attachment.ephemeral ?? false,
+      filename: attachment.filename,
+      description: attachment.description,
+      height: attachment.height,
+      id: BigInt(attachment.id),
+      proxyUrl: attachment.proxy_url,
+      size: attachment.size,
+      url: attachment.url,
+      width: attachment.width,
+    })),
+    author: BigInt(payload.author.id),
+    channelId: BigInt(payload.channel_id),
+    components: payload.components.map((c: any) => transformComponent(c)),
+    content: payload.content,
+    editedTimestamp: payload.edited_timestamp,
+    embeds: [] as any, //payload.embeds.map(),
+    guildId: payload.guild_id ? BigInt(payload.guild_id) : undefined,
+    id: BigInt(payload.id),
+    interaction: undefined, // payload.message_interaction, //////////////////////////////////////////////////////////////////
+    type: payload.type,
+    pinned: payload.pinned,
+    referencedMessage: undefined, // payload.referenced_message, //////////////////////////////////////////////////////////////////
+    threadId: payload.thread_id ? BigInt(payload.thread_id) : undefined,
+    webhookId: payload.webhook_id ? BigInt(payload.webhook_id) : undefined,
+  };
+}
+
+function transformGuild(payload: any): Guild {
+  return {
+    "id": BigInt(payload.id),
+    "name": payload.name,
+    "icon": payload.icon,
+    "description": payload.description,
+    "splash": payload.splash,
+    "discoverySplash": payload.discovery_splash,
+    "features": payload.features,
+    "banner": payload.banner,
+    "ownerId": BigInt(payload.owner_id),
+    "applicationId": payload.application_id
+      ? BigInt(payload.application_id)
+      : undefined,
+    "afkChannelId": payload.afk_channel_id
+      ? BigInt(payload.afk_channel_id)
+      : undefined,
+    "afkTimeout": payload.afk_timeout,
+    "systemChannelId": payload.system_channel_id
+      ? BigInt(payload.system_channel_id)
+      : undefined,
+    "widgetEnabled": payload.widget_enabled,
+    "widgetChannelId": payload.widget_channel_id
+      ? BigInt(payload.widget_channel_id)
+      : undefined,
+    "verificationLevel": payload.verification_level,
+    "defaultMessageNotifications": payload.default_message_notifications,
+    "mfaLevel": payload.mfa_level,
+    "explicitContentFilter": payload.explicit_content_filter,
+    "maxPresences": payload.max_presences,
+    "maxMembers": payload.max_members,
+    "maxVideoChannelUsers": payload.max_video_channel_users,
+    "vanityUrlCode": payload.vanity_url_code,
+    "premiumTier": payload.premium_tier,
+    "premiumSubscriptionCount": payload.premium_subscription_count,
+    "systemChannelFlags": payload.system_channel_flags,
+    "preferredLocale": payload.preferred_locale,
+    "rulesChannelId": payload.rules_channel_id
+      ? BigInt(payload.rules_channel_id)
+      : undefined,
+    "publicUpdatesChannelId": payload.public_updates_channel_id
+      ? BigInt(payload.public_updates_channel_id)
+      : undefined,
+    "premiumProgressBarEnabled": payload.premium_progress_bar_enabled,
+    "nsfwLevel": payload.nsfw_level,
+    "large": payload.large,
+    "unavailable": false,
+  };
+}
+
 import {
   createBot,
   GatewayDispatchEventNames,
@@ -183,11 +317,17 @@ import {
 
 let users = new Set();
 
+const now = performance.now();
+let counter = 0;
 const bot = createBot({
   token: "",
-  botId: 0n,
+  botId: BigInt(atob("MjcwMDEwMzMwNzgyODkyMDMy")),
   events: {
-    async raw(_, data) {
+    async raw(_, data, shardId) {
+      if (data.t === "MESSAGE_CREATE") {
+        shouldStats.messages++;
+        cache.send({ op: OpCode.CacheMessage, d: transformMessage(data.d) });
+      }
       if (["GUILD_LOADED_DD", "GUILD_CREATE"].includes(data.t as string)) {
         let payload: any = data.d;
 
@@ -197,57 +337,12 @@ const bot = createBot({
 
         // console.log({ payload: payload.channels });
 
+        const guild = transformGuild(payload);
+
         await Promise.all([
           cache.send({
             op: OpCode.CacheGuild,
-            d: {
-              "id": BigInt(payload.id),
-              "name": payload.name,
-              "icon": payload.icon,
-              "description": payload.description,
-              "splash": payload.splash,
-              "discoverySplash": payload.discovery_splash,
-              "features": payload.features,
-              "banner": payload.banner,
-              "ownerId": BigInt(payload.owner_id),
-              "applicationId": payload.application_id
-                ? BigInt(payload.application_id)
-                : undefined,
-              "afkChannelId": payload.afk_channel_id
-                ? BigInt(payload.afk_channel_id)
-                : undefined,
-              "afkTimeout": payload.afk_timeout,
-              "systemChannelId": payload.system_channel_id
-                ? BigInt(payload.system_channel_id)
-                : undefined,
-              "widgetEnabled": payload.widget_enabled,
-              "widgetChannelId": payload.widget_channel_id
-                ? BigInt(payload.widget_channel_id)
-                : undefined,
-              "verificationLevel": payload.verification_level,
-              "defaultMessageNotifications":
-                payload.default_message_notifications,
-              "mfaLevel": payload.mfa_level,
-              "explicitContentFilter": payload.explicit_content_filter,
-              "maxPresences": payload.max_presences,
-              "maxMembers": payload.max_members,
-              "maxVideoChannelUsers": payload.max_video_channel_users,
-              "vanityUrlCode": payload.vanity_url_code,
-              "premiumTier": payload.premium_tier,
-              "premiumSubscriptionCount": payload.premium_subscription_count,
-              "systemChannelFlags": payload.system_channel_flags,
-              "preferredLocale": payload.preferred_locale,
-              "rulesChannelId": payload.rules_channel_id
-                ? BigInt(payload.rules_channel_id)
-                : undefined,
-              "publicUpdatesChannelId": payload.public_updates_channel_id
-                ? BigInt(payload.public_updates_channel_id)
-                : undefined,
-              "premiumProgressBarEnabled": payload.premium_progress_bar_enabled,
-              "nsfwLevel": payload.nsfw_level,
-              "large": payload.large,
-              "unavailable": false,
-            },
+            d: guild,
           }),
           Promise.all(
             [...payload.channels, ...payload.threads].map(async (c: any) => {
@@ -306,12 +401,21 @@ const bot = createBot({
       console.log(`[READY] Shard #${p.shardId}`);
     },
   },
-  intents: ["Guilds"],
+  intents: ["Guilds", "GuildMessages", "DirectMessages"],
 });
 
 import { walk, walkSync } from "https://deno.land/std@0.136.0/fs/mod.ts";
 import { createCache, createWorkerCache } from "./client.ts";
-import { Channel, Member, OpCode, Role, User } from "./types/data.ts";
+import {
+  Channel,
+  Component,
+  Guild,
+  Member,
+  Message,
+  OpCode,
+  Role,
+  User,
+} from "./types/data.ts";
 import { decode } from "./cbor.ts";
 import { fromUint } from "./utils.ts";
 
@@ -320,27 +424,28 @@ let payloads: { offset: number; data: Object }[] = [];
 
 // Async
 async function run() {
-  for await (const entry of walk("./mock", { includeDirs: false })) {
+  for await (const entry of walk("./mock2", { includeDirs: false })) {
     paths.push(entry.path);
   }
 
   await Promise.all(paths.map(async (path) => {
     const file = JSON.parse(await Deno.readTextFile(path));
 
-    setTimeout(() => {
-      bot.events.raw({} as any, file.data, 0);
-      if (file.data.t) {
-        bot.handlers
-          [file.data.t as GatewayDispatchEventNames | "GUILD_LOADED_DD"]?.(
-            bot,
-            file.data,
-            0,
-          );
-      }
-    }, file.offset);
+    // setTimeout(() => {
+    bot.events.raw({} as any, file.data, file.shardId);
+    if (file.data.t) {
+      bot.handlers
+        [file.data.t as GatewayDispatchEventNames | "GUILD_LOADED_DD"]?.(
+          bot,
+          file.data,
+          0,
+        );
+    }
+    // }, file.offset);
   }));
 }
 
 console.log("STARTING TO SEND");
 
 await run();
+// startBot(bot);
